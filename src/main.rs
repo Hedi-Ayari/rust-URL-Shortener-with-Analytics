@@ -1,5 +1,6 @@
 use axum::{routing::get, Router};
 use tokio::net::TcpListener;
+mod db;
 
 async fn hello() -> &'static str {
     "Rust URL Shortener is running!"
@@ -7,6 +8,14 @@ async fn hello() -> &'static str {
 
 #[tokio::main]
 async fn main() {
+    match db::get_db().await {
+        Ok(_) => println!("Connected to MongoDB successfully"),
+        Err(e) => {
+            println!("Failed to connect to MongoDB: {}", e);
+            return;
+        }
+    }
+
     let app = Router::new()
         .route("/", get(hello));
 
