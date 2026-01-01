@@ -80,6 +80,6 @@ pub async fn stats(
     Ok(Json(serde_json::json!({
         "original_url": mapping.original_url,
         "clicks": mapping.clicks,
-        "created_at": mapping.created_at.to_rfc3339_string(),
+        "created_at": mapping.created_at.try_to_rfc3339_string().unwrap_or_default(),
     })))
 }

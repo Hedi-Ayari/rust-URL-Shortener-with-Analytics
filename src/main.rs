@@ -4,9 +4,7 @@ mod db;
 mod routes;
 mod models;
 
-async fn hello() -> &'static str {
-    "Rust URL Shortener is running!"
-}
+
 
 #[tokio::main]
 async fn main() {
