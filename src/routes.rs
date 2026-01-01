@@ -44,12 +44,24 @@ pub async fn shorten_url(
     }))
 }
 
+use axum::response::Redirect;
+use mongodb::bson::doc;
+
 pub async fn redirect(
-    Extension(_db): Extension<Database>,
-    Path(_code): Path<String>,
-) -> Result<String, StatusCode> {
-    println!("We hit the redirect router");
-    Ok("Redirecting...".to_string())
+    Extension(db): Extension<Database>,
+    Path(code): Path<String>,
+) -> Result<Redirect, StatusCode> {
+    let collection = db.collection::<UrlMapping>("urls");
+    
+    let filter = doc! { "short_code": &code };
+    let update = doc! { "$inc": { "clicks": 1 } };
+    
+    let mapping = collection.find_one_and_update(filter, update, None)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
+    Ok(Redirect::to(&mapping.original_url))
 }
 
 pub async fn stats(
