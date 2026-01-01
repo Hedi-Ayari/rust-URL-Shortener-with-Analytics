@@ -65,12 +65,21 @@ pub async fn redirect(
 }
 
 pub async fn stats(
-    Extension(_db): Extension<Database>,
-    Path(_code): Path<String>,
+    Extension(db): Extension<Database>,
+    Path(code): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    println!("We hit the stats router");
+    let collection = db.collection::<UrlMapping>("urls");
+    
+    let filter = doc! { "short_code": &code };
+    
+    let mapping = collection.find_one(filter, None)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+
     Ok(Json(serde_json::json!({
-        "clicks": 0,
-        "created_at": "2023-01-01T00:00:00Z"
+        "original_url": mapping.original_url,
+        "clicks": mapping.clicks,
+        "created_at": mapping.created_at.to_rfc3339_string(),
     })))
 }
