@@ -17,13 +17,30 @@ pub async fn hello() -> &'static str {
     "Rust URL Shortener is running!"
 }
 
+use crate::models::UrlMapping;
+use nanoid::nanoid;
+use mongodb::bson::DateTime;
+
 pub async fn shorten_url(
-    Extension(_db): Extension<Database>,
-    Json(_payload): Json<ShortenRequest>,
+    Extension(db): Extension<Database>,
+    Json(payload): Json<ShortenRequest>,
 ) -> Result<Json<ShortenResponse>, StatusCode> {
-    println!("We hit the shorten_url router");
+    let collection = db.collection::<UrlMapping>("urls");
+    let short_code = nanoid!(6);
+    
+    let mapping = UrlMapping {
+        original_url: payload.url,
+        short_code: short_code.clone(),
+        clicks: 0,
+        created_at: DateTime::now(),
+    };
+
+    collection.insert_one(mapping, None)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
     Ok(Json(ShortenResponse {
-        short_code: "abc123".to_string(),
+        short_code,
     }))
 }
 
