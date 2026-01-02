@@ -1,4 +1,4 @@
-use axum::{extract::Path, response::Json, Extension};
+use axum::{extract::Path, response::Json, Extension, http::HeaderMap};
 use mongodb::Database;
 use serde::{Deserialize, Serialize};
 
@@ -81,28 +81,60 @@ pub async fn shorten_url(
 use axum::response::Redirect;
 
 
+use crate::models::ClickEvent;
+
 pub async fn redirect(
     Extension(db): Extension<Database>,
+    headers: HeaderMap,
     Path(code): Path<String>,
 ) -> Result<Redirect, AppError> {
     tracing::info!("Redirect request received for code: {}", code);
 
     let collection = db.collection::<UrlMapping>("urls");
+    let clicks_collection = db.collection::<ClickEvent>("clicks");
     
     let filter = doc! { "short_code": &code };
-    let update = doc! { "$inc": { "clicks": 1 } };
     
-    tracing::debug!("Fetching and updating click count for code: {}", code);
-    let mapping = collection.find_one_and_update(filter, update, None)
+    let mapping = collection.find_one(filter.clone(), None)
         .await
         .map_err(|e| {
-            tracing::error!("Database update failed for code {}: {}", code, e);
+            tracing::error!("Database fetch failed for code {}: {}", code, e);
             AppError::Internal("Database error during redirection".to_string())
         })?
         .ok_or_else(|| {
             tracing::warn!("Short code not found: {}", code);
             AppError::NotFound("Short code not found".to_string())
         })?;
+
+    // Check expiration
+    if let Some(expires_at) = mapping.expires_at {
+        if expires_at.timestamp_millis() < BsonDateTime::now().timestamp_millis() {
+            return Err(AppError::BadRequest("This short URL has expired".into()));
+        }
+    }
+
+    // Record click event
+    let user_agent = headers.get("user-agent")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    
+    // In a real app, you'd get the IP from ConnectInfo or headers like X-Forwarded-For
+    let ip_address = headers.get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string());
+
+    let click_event = ClickEvent {
+        short_code: code.clone(),
+        ip_address,
+        user_agent,
+        timestamp: BsonDateTime::now(),
+    };
+
+    // Update click count and record event (fire and forget or await)
+    let update = doc! { "$inc": { "clicks": 1 } };
+    let _ = collection.update_one(filter, update, None).await;
+    let _ = clicks_collection.insert_one(click_event, None).await;
 
     tracing::info!("Redirecting code {} to: {}", code, mapping.original_url);
     Ok(Redirect::to(&mapping.original_url))
@@ -114,26 +146,40 @@ pub async fn stats(
 ) -> Result<Json<serde_json::Value>, AppError> {
     tracing::info!("Stats request received for code: {}", code);
 
-    let collection = db.collection::<UrlMapping>("urls");
+    let urls_collection = db.collection::<UrlMapping>("urls");
+    let clicks_collection = db.collection::<ClickEvent>("clicks");
     
     let filter = doc! { "short_code": &code };
     
-    tracing::debug!("Fetching stats for code: {}", code);
-    let mapping = collection.find_one(filter, None)
+    let mapping = urls_collection.find_one(filter.clone(), None)
         .await
-        .map_err(|e| {
-            tracing::error!("Database fetch failed for code {}: {}", code, e);
-            AppError::Internal("Database error while fetching stats".to_string())
-        })?
-        .ok_or_else(|| {
-            tracing::warn!("Short code not found: {}", code);
-            AppError::NotFound("Short code not found".to_string())
-        })?;
+        .map_err(|_| AppError::Internal("Database error".into()))?
+        .ok_or_else(|| AppError::NotFound("Short code not found".into()))?;
 
-    tracing::info!("Stats retrieved successfully for code: {}", code);
+    // Aggregate click data (mocking geo-location for now or using IP)
+    let total_clicks = mapping.clicks;
+    
+    // Get last 10 clicks
+    let mut cursor = clicks_collection.find(filter, None).await.map_err(|_| AppError::Internal("DB Error".into()))?;
+    let mut last_clicks = Vec::new();
+    
+    use futures::StreamExt;
+    while let Some(click) = cursor.next().await {
+        if let Ok(c) = click {
+            last_clicks.push(serde_json::json!({
+                "timestamp": c.timestamp.try_to_rfc3339_string().unwrap_or_default(),
+                "ip": c.ip_address,
+                "ua": c.user_agent,
+            }));
+        }
+    }
+
     Ok(Json(serde_json::json!({
         "original_url": mapping.original_url,
-        "clicks": mapping.clicks,
+        "short_code": mapping.short_code,
+        "total_clicks": total_clicks,
         "created_at": mapping.created_at.try_to_rfc3339_string().unwrap_or_default(),
+        "expires_at": mapping.expires_at.map(|e| e.try_to_rfc3339_string().unwrap_or_default()),
+        "last_clicks": last_clicks,
     })))
 }
