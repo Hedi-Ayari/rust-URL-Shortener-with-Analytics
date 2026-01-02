@@ -1,10 +1,12 @@
-use axum::{extract::Path, http::StatusCode, response::Json, Extension};
+use axum::{extract::Path, response::Json, Extension};
 use mongodb::Database;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct ShortenRequest {
     pub url: String,
+    pub custom_code: Option<String>,
+    pub expires_at: Option<String>, // RFC3339 string
 }
 
 #[derive(Serialize, Deserialize)]
@@ -19,7 +21,7 @@ pub async fn hello() -> &'static str {
 
 use crate::models::{UrlMapping, AppError};
 use nanoid::nanoid;
-use mongodb::bson::DateTime;
+use mongodb::bson::{doc, DateTime as BsonDateTime};
 
 pub async fn shorten_url(
     Extension(db): Extension<Database>,
@@ -32,13 +34,34 @@ pub async fn shorten_url(
     }
 
     let collection = db.collection::<UrlMapping>("urls");
-    let short_code = nanoid!(6);
+    
+    let has_custom = payload.custom_code.is_some();
+    let short_code = if let Some(custom) = &payload.custom_code {
+        // Check if custom code exists
+        let filter = doc! { "short_code": custom };
+        if collection.find_one(filter, None).await.map_err(|_| AppError::Internal("DB Error".into()))?.is_some() {
+            return Err(AppError::BadRequest("Custom code already in use".into()));
+        }
+        custom.clone()
+    } else {
+        nanoid!(6)
+    };
+
+    let expires_at = if let Some(expires) = &payload.expires_at {
+        let dt = chrono::DateTime::parse_from_rfc3339(expires)
+            .map_err(|_| AppError::BadRequest("Invalid expiration date format. Use RFC3339".into()))?;
+        Some(BsonDateTime::from_millis(dt.timestamp_millis()))
+    } else {
+        None
+    };
     
     let mapping = UrlMapping {
         original_url: payload.url,
         short_code: short_code.clone(),
+        custom_code: if has_custom { Some(short_code.clone()) } else { None },
         clicks: 0,
-        created_at: DateTime::now(),
+        created_at: BsonDateTime::now(),
+        expires_at,
     };
 
     tracing::debug!("Inserting new URL mapping for code: {}", short_code);
@@ -56,7 +79,7 @@ pub async fn shorten_url(
 }
 
 use axum::response::Redirect;
-use mongodb::bson::doc;
+
 
 pub async fn redirect(
     Extension(db): Extension<Database>,
