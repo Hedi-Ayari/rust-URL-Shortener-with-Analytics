@@ -27,15 +27,20 @@ use crate::models::{UrlMapping, AppError};
 use nanoid::nanoid;
 use mongodb::bson::{doc, DateTime as BsonDateTime};
 
+pub fn validate_url(url: &str) -> Result<(), AppError> {
+    if url.is_empty() || !url.starts_with("http") {
+        return Err(AppError::BadRequest("Invalid URL format. URL must start with http:// or https://".to_string()));
+    }
+    Ok(())
+}
+
 pub async fn shorten_url(
     Extension(db): Extension<Database>,
     Json(payload): Json<ShortenRequest>,
 ) -> Result<Json<ShortenResponse>, AppError> {
     tracing::info!("Shorten request received for URL: {}", payload.url);
 
-    if payload.url.is_empty() || !payload.url.starts_with("http") {
-        return Err(AppError::BadRequest("Invalid URL format. URL must start with http:// or https://".to_string()));
-    }
+    validate_url(&payload.url)?;
 
     let collection = db.collection::<UrlMapping>("urls");
     
@@ -225,4 +230,22 @@ pub async fn generate_qr_code(
         [(axum::http::header::CONTENT_TYPE, "image/png")],
         body,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_url_valid() {
+        assert!(validate_url("http://google.com").is_ok());
+        assert!(validate_url("https://rust-lang.org").is_ok());
+    }
+
+    #[test]
+    fn test_validate_url_invalid() {
+        assert!(validate_url("google.com").is_err());
+        assert!(validate_url("ftp://files.com").is_err());
+        assert!(validate_url("").is_err());
+    }
 }
