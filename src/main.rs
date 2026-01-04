@@ -1,4 +1,5 @@
 use axum::{routing::{get, post}, Router, Extension};
+use std::sync::Arc;
 use tokio::net::TcpListener;
 use tower_http::cors::CorsLayer;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -6,6 +7,8 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 mod db;
 mod routes;
 mod models;
+
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder};
 
 #[tokio::main]
 async fn main() {
@@ -29,10 +32,20 @@ async fn main() {
         }
     };
 
+    let governor_config = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(2)
+            .burst_size(5)
+            .finish()
+            .unwrap()
+    );
+
     let app = Router::new()
         .route("/shorten", post(routes::shorten_url))
         .route("/:code", get(routes::redirect))
         .route("/stats/:code", get(routes::stats))
+        .route("/qr/:code", get(routes::generate_qr_code))
+        .layer(GovernorLayer { config: governor_config })
         .layer(Extension(db))
         .layer(CorsLayer::permissive());
 

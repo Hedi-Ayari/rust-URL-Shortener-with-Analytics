@@ -1,4 +1,8 @@
 use axum::{extract::Path, response::Json, Extension, http::HeaderMap};
+use futures::StreamExt;
+use qrcode::QrCode;
+use image::{Luma, GrayImage};
+use std::io::Cursor;
 use mongodb::Database;
 use serde::{Deserialize, Serialize};
 
@@ -163,7 +167,6 @@ pub async fn stats(
     let mut cursor = clicks_collection.find(filter, None).await.map_err(|_| AppError::Internal("DB Error".into()))?;
     let mut last_clicks = Vec::new();
     
-    use futures::StreamExt;
     while let Some(click) = cursor.next().await {
         if let Ok(c) = click {
             last_clicks.push(serde_json::json!({
@@ -182,4 +185,44 @@ pub async fn stats(
         "expires_at": mapping.expires_at.map(|e| e.try_to_rfc3339_string().unwrap_or_default()),
         "last_clicks": last_clicks,
     })))
+}
+
+
+
+pub async fn generate_qr_code(
+    Path(code): Path<String>,
+) -> Result<impl axum::response::IntoResponse, AppError> {
+    tracing::info!("QR code request received for code: {}", code);
+
+    let base_url = std::env::var("BASE_URL").unwrap_or_else(|_| "http://localhost:8080".into());
+    let short_url = format!("{}/{}", base_url, code);
+
+    let qr = QrCode::new(short_url.as_bytes())
+        .map_err(|_| AppError::Internal("Failed to generate QR code".into()))?;
+
+    let width = qr.width() as u32;
+    let mut img = GrayImage::new(width, width);
+
+    for x in 0..width {
+        for y in 0..width {
+            let is_dark = qr[(x as usize, y as usize)] == qrcode::Color::Dark;
+            let color = if is_dark { 0u8 } else { 255u8 };
+            img.put_pixel(x, y, Luma([color]));
+        }
+    }
+
+    // Scale up for better visibility (optional but recommended)
+    let dynamic_img = image::DynamicImage::ImageLuma8(img);
+    let scaled_img = dynamic_img.resize(512, 512, image::imageops::FilterType::Nearest);
+
+    let mut buffer = Cursor::new(Vec::new());
+    scaled_img.write_to(&mut buffer, image::ImageFormat::Png)
+        .map_err(|_| AppError::Internal("Failed to encode QR code image".into()))?;
+
+    let body = buffer.into_inner();
+
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "image/png")],
+        body,
+    ))
 }
