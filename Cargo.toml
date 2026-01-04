@@ -13,7 +13,7 @@ nanoid = "0.4"
 dotenvy = "0.15"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-tower-http = { version = "0.5", features = ["cors"] }
+tower-http = { version = "0.5", features = ["cors", "trace"] }
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 qrcode = "0.12"

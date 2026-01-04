@@ -40,14 +40,20 @@ async fn main() {
             .unwrap()
     );
 
+    let cors = CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any);
+
     let app = Router::new()
         .route("/shorten", post(routes::shorten_url))
         .route("/:code", get(routes::redirect))
         .route("/stats/:code", get(routes::stats))
         .route("/qr/:code", get(routes::generate_qr_code))
+        .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(GovernorLayer { config: governor_config })
         .layer(Extension(db))
-        .layer(CorsLayer::permissive());
+        .layer(cors);
 
     tracing::info!("Server running on http://localhost:8080");
 
