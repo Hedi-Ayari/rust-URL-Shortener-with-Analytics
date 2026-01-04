@@ -4,48 +4,18 @@ import {
   BarChart3,
   QrCode as QrIcon,
   Plus,
-  History,
   Copy,
   CheckCircle2,
   AlertCircle,
   TrendingUp,
   Globe,
   Zap,
+  Activity,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import axios from "axios";
 
 const API_BASE = "http://localhost:8080";
-
-// Global Axios Config for better debugging
-axios.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    console.group("API Request Error");
-    console.error("URL:", error.config?.url);
-    console.error("Method:", error.config?.method);
-    console.error("Status:", error.response?.status);
-    console.error("Data:", error.response?.data);
-    console.error("Full Error:", error);
-    console.groupEnd();
-    return Promise.reject(error);
-  }
-);
-
-interface ClickData {
-  timestamp: string;
-  ip: string | null;
-  ua: string | null;
-}
-
-interface URLStats {
-  original_url: string;
-  short_code: string;
-  total_clicks: number;
-  created_at: string;
-  expires_at: string | null;
-  last_clicks: ClickData[];
-}
 
 function App() {
   const [url, setUrl] = useState("");
@@ -53,23 +23,25 @@ function App() {
   const [expiryDays, setExpiryDays] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<string | null>(null);
-  const [stats, setStats] = useState<URLStats | null>(null);
+  const [stats, setStats] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [serverStatus, setServerStatus] = useState<
-    "online" | "offline" | "checking"
-  >("checking");
+    "online" | "offline" | "waiting"
+  >("waiting");
 
   useEffect(() => {
     const checkServer = async () => {
       try {
-        await axios.get(`${API_BASE}/`); // Hello route
+        await axios.get(`${API_BASE}/`);
         setServerStatus("online");
       } catch (err) {
         setServerStatus("offline");
       }
     };
     checkServer();
+    const interval = setInterval(checkServer, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   const shortenUrl = async (e: React.FormEvent) => {
@@ -86,24 +58,26 @@ function App() {
         expires_at = date.toISOString();
       }
 
-      console.log("Sending request to:", `${API_BASE}/shorten`);
       const res = await axios.post(`${API_BASE}/shorten`, {
         url,
         custom_code: customCode || null,
         expires_at,
       });
 
-      console.log("Success:", res.data);
       const fullUrl = `${API_BASE}/${res.data.short_code}`;
       setResult(fullUrl);
       fetchStats(res.data.short_code);
     } catch (err: any) {
-      console.error("Shorten URL Error:", err);
-      setError(
-        err.response?.data?.error ||
-          err.message ||
-          "Connection to backend failed"
-      );
+      console.error(err);
+      if (err.response?.status === 500) {
+        setError(
+          "The server encountered an internal error. I've disabled rate-limiting, so please restart the backend to apply the fix."
+        );
+      } else {
+        setError(
+          err.response?.data?.error || err.message || "Connection failed."
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -114,7 +88,7 @@ function App() {
       const res = await axios.get(`${API_BASE}/stats/${code}`);
       setStats(res.data);
     } catch (err) {
-      console.error("Failed to fetch stats");
+      console.error("Stats fetch failed");
     }
   };
 
@@ -127,272 +101,399 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen">
-      <div className="mesh-bg" />
+    <div className="dashboard-layout">
+      <div className="app-bg" />
 
-      {/* Sidebar Navigation (Clean & Minimal) */}
-      <nav className="fixed left-0 top-0 h-full w-20 flex flex-col items-center py-8 border-r border-white-[0.05] bg-black/20 backdrop-blur-xl hidden md:flex">
-        <div className="p-3 bg-indigo-500/20 rounded-2xl mb-12">
-          <Zap className="text-white" size={24} />
+      <nav className="sidebar">
+        <div className="nav-icon active">
+          <Zap size={24} />
         </div>
-        <div className="flex flex-col gap-8 text-neutral-500">
-          <Link2 className="text-white cursor-pointer" size={22} />
-          <BarChart3
-            className="hover:text-white transition-colors cursor-pointer"
-            size={22}
-          />
-          <History
-            className="hover:text-white transition-colors cursor-pointer"
-            size={22}
-          />
+        <div className="nav-icon">
+          <Link2 size={24} />
+        </div>
+        <div className="nav-icon">
+          <BarChart3 size={24} />
+        </div>
+        <div className="nav-icon" style={{ marginTop: "auto" }}>
+          <Activity size={24} />
         </div>
       </nav>
 
-      {/* Main Content */}
-      <main className="md:ml-20 p-6 md:p-12 lg:p-16 max-w-7xl mx-auto">
-        <header className="flex justify-between items-center mb-16">
-          <div>
-            <h1 className="text-4xl font-bold tracking-tight mb-2 gradient-text">
-              Next-Gen Link Shortener
-            </h1>
-            <div className="flex items-center gap-3">
-              <span className="badge">Internal API</span>
-              <div className="flex items-center gap-2 text-xs text-neutral-500">
+      <main className="main-viewport">
+        <div className="content-container fade-up">
+          <header className="page-header">
+            <div>
+              <h1 className="title-glow">LinkNova Console</h1>
+              <div className="server-label mt-4">
                 <div
-                  className={`w-2 h-2 rounded-full ${
+                  className={`status-dot ${
                     serverStatus === "online"
-                      ? "bg-emerald-500 shadow-[0_0_8px_#10b981]"
+                      ? "online"
                       : serverStatus === "offline"
-                      ? "bg-red-500"
-                      : "bg-yellow-500 animate-pulse"
+                      ? "offline"
+                      : "waiting"
                   }`}
                 />
                 {serverStatus === "online"
-                  ? "Server Connected"
+                  ? "Core Engine Online"
                   : serverStatus === "offline"
-                  ? "Server Disconnected"
-                  : "Checking Connection..."}
+                  ? "Core Engine Offline"
+                  : "Syncing Engine Status..."}
               </div>
             </div>
-          </div>
-        </header>
+            <div className="server-label">Stable v1.3.0</div>
+          </header>
 
-        <section className="grid grid-cols-1 lg:grid-cols-12 gap-10">
-          {/* Form Side */}
-          <div className="lg:col-span-12 xl:col-span-7">
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="glass-panel p-8 md:p-10"
-            >
-              <h2 className="text-xl font-semibold mb-8 flex items-center gap-2">
-                <Plus size={20} className="text-indigo-400" />
-                Create Short Link
-              </h2>
+          <section className="grid-container">
+            <div className="card-forge">
+              <div className="ultra-card">
+                <h2
+                  style={{
+                    fontSize: "1.5rem",
+                    fontWeight: 800,
+                    marginBottom: "40px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "16px",
+                  }}
+                >
+                  <Plus style={{ color: "#10b981" }} size={28} />
+                  Forge New Shortcut
+                </h2>
 
-              <form onSubmit={shortenUrl} className="space-y-8">
-                <div>
-                  <label className="block text-xs font-bold text-neutral-500 uppercase tracking-widest mb-3">
-                    Destination URL
-                  </label>
-                  <input
-                    className="input-field text-lg"
-                    placeholder="https://example.com/very-long-path"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <label className="block text-xs font-bold text-neutral-500 uppercase tracking-widest mb-3">
-                      Custom Alias (Optional)
-                    </label>
+                <form onSubmit={shortenUrl}>
+                  <div className="field-group">
+                    <label className="field-label">Destination Identity</label>
                     <input
-                      className="input-field"
-                      placeholder="my-brand-link"
-                      value={customCode}
-                      onChange={(e) => setCustomCode(e.target.value)}
+                      className="modern-input"
+                      placeholder="https://resource-location.com/path"
+                      value={url}
+                      onChange={(e) => setUrl(e.target.value)}
+                      required
                     />
                   </div>
-                  <div>
-                    <label className="block text-xs font-bold text-neutral-500 uppercase tracking-widest mb-3">
-                      Expiration
-                    </label>
-                    <select
-                      className="input-field appearance-none cursor-pointer"
-                      value={expiryDays}
-                      onChange={(e) => setExpiryDays(e.target.value)}
-                    >
-                      <option value="">Never Expires</option>
-                      <option value="1">1 Day</option>
-                      <option value="7">7 Days</option>
-                      <option value="30">30 Days</option>
-                    </select>
+
+                  <div className="input-split">
+                    <div className="field-group">
+                      <label className="field-label">Custom Designation</label>
+                      <input
+                        className="modern-input"
+                        placeholder="e.g. custom-id"
+                        value={customCode}
+                        onChange={(e) => setCustomCode(e.target.value)}
+                      />
+                    </div>
+                    <div className="field-group">
+                      <label className="field-label">Link TTL</label>
+                      <select
+                        className="modern-input"
+                        value={expiryDays}
+                        onChange={(e) => setExpiryDays(e.target.value)}
+                        style={{ cursor: "pointer" }}
+                      >
+                        <option value="">Infinite Persistence</option>
+                        <option value="1">24 Hour Window</option>
+                        <option value="7">7 Day Cycle</option>
+                        <option value="30">30 Day Epoch</option>
+                      </select>
+                    </div>
                   </div>
-                </div>
 
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="action-btn w-full"
-                >
-                  {loading ? (
-                    <div className="w-5 h-5 border-2 border-black/20 border-t-black rounded-full animate-spin" />
-                  ) : (
-                    <>
-                      Shorten Link <TrendingUp size={18} />
-                    </>
-                  )}
-                </button>
-              </form>
-
-              <AnimatePresence>
-                {error && (
-                  <motion.div
-                    initial={{ opacity: 0, height: 0 }}
-                    animate={{ opacity: 1, height: "auto" }}
-                    exit={{ opacity: 0, height: 0 }}
-                    className="mt-8 overflow-hidden"
+                  <button
+                    type="submit"
+                    className="btn-wowie"
+                    disabled={loading}
                   >
-                    <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 flex items-start gap-3">
-                      <AlertCircle size={18} className="mt-0.5" />
-                      <div>
-                        <p className="text-sm font-semibold">Error Detected</p>
-                        <p className="text-xs opacity-80">{error}</p>
+                    {loading ? (
+                      "Initializing..."
+                    ) : (
+                      <>
+                        Generate Fragment <TrendingUp size={20} />
+                      </>
+                    )}
+                  </button>
+
+                  <AnimatePresence>
+                    {error && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="error-vibe"
+                      >
+                        <AlertCircle size={24} style={{ flexShrink: 0 }} />
+                        <div style={{ fontSize: "13px" }}>
+                          <strong
+                            style={{ display: "block", marginBottom: "4px" }}
+                          >
+                            System Exception
+                          </strong>
+                          <p>{error}</p>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </form>
+              </div>
+            </div>
+
+            <div className="card-metrics">
+              <AnimatePresence mode="wait">
+                {result ? (
+                  <motion.div
+                    key="result"
+                    initial={{ opacity: 0, x: 30 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -30 }}
+                  >
+                    <div className="ultra-card">
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          marginBottom: "32px",
+                        }}
+                      >
+                        <h3
+                          style={{
+                            fontSize: "1.1rem",
+                            fontWeight: 800,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: "10px",
+                          }}
+                        >
+                          <CheckCircle2
+                            style={{ color: "#10b981" }}
+                            size={20}
+                          />
+                          Network Fragment Ready
+                        </h3>
+                      </div>
+
+                      <div
+                        className="modern-input"
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                          background: "rgba(255,255,255,0.02)",
+                          padding: "24px",
+                        }}
+                      >
+                        <span
+                          style={{
+                            fontWeight: 800,
+                            color: "#818cf8",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {result}
+                        </span>
+                        <button
+                          onClick={copyToClipboard}
+                          style={{
+                            background: "transparent",
+                            border: "none",
+                            color: copied ? "#10b981" : "#64748b",
+                            cursor: "pointer",
+                            display: "flex",
+                          }}
+                        >
+                          {copied ? (
+                            <CheckCircle2 size={24} />
+                          ) : (
+                            <Copy size={24} />
+                          )}
+                        </button>
+                      </div>
+
+                      <div className="mini-stats">
+                        <div className="stat-box">
+                          <span className="field-label">Engagements</span>
+                          <div style={{ fontSize: "2.5rem", fontWeight: 800 }}>
+                            {stats?.total_clicks || 0}
+                          </div>
+                        </div>
+                        <div
+                          className="stat-box"
+                          style={{
+                            display: "flex",
+                            justifyContent: "center",
+                            alignItems: "center",
+                          }}
+                        >
+                          <div className="qr-plate">
+                            <img
+                              src={`${API_BASE}/qr/${
+                                stats?.short_code || result.split("/").pop()
+                              }`}
+                              alt="QR"
+                              style={{
+                                width: "80px",
+                                height: "80px",
+                                display: "block",
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ marginTop: "40px" }}>
+                        <span className="field-label">Traffic Log</span>
+                        <div
+                          style={{
+                            display: "flex",
+                            flexDirection: "column",
+                            gap: "12px",
+                            marginTop: "16px",
+                          }}
+                        >
+                          {stats?.last_clicks?.length > 0 ? (
+                            stats.last_clicks
+                              .slice(0, 3)
+                              .map((c: any, i: number) => (
+                                <div
+                                  key={i}
+                                  style={{
+                                    padding: "16px",
+                                    borderRadius: "18px",
+                                    background: "rgba(255,255,255,0.02)",
+                                    fontSize: "11px",
+                                    display: "flex",
+                                    justifyContent: "space-between",
+                                    color: "#64748b",
+                                    border: "1px solid var(--border-dim)",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      display: "flex",
+                                      alignItems: "center",
+                                      gap: "8px",
+                                    }}
+                                  >
+                                    <Globe size={12} />
+                                    {c.ip || "Anonymous Client"}
+                                  </span>
+                                  <span style={{ opacity: 0.6 }}>
+                                    {new Date(c.timestamp).toLocaleTimeString()}
+                                  </span>
+                                </div>
+                              ))
+                          ) : (
+                            <div
+                              style={{
+                                padding: "32px",
+                                textAlign: "center",
+                                color: "#334155",
+                                fontSize: "12px",
+                                fontWeight: 600,
+                              }}
+                            >
+                              Syncing incoming traffic metrics...
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </motion.div>
+                ) : (
+                  <div
+                    className="ultra-card"
+                    style={{
+                      height: "100%",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      textAlign: "center",
+                      borderStyle: "dashed",
+                      opacity: 0.8,
+                    }}
+                  >
+                    <div
+                      style={{
+                        padding: "32px",
+                        background: "rgba(255,255,255,0.02)",
+                        borderRadius: "50%",
+                        marginBottom: "32px",
+                      }}
+                    >
+                      <QrIcon size={56} style={{ opacity: 0.3 }} />
+                    </div>
+                    <h3
+                      style={{
+                        fontSize: "1.25rem",
+                        fontWeight: 800,
+                        marginBottom: "24px",
+                      }}
+                    >
+                      Metrics Console
+                    </h3>
+
+                    <div style={{ width: "100%", maxWidth: "280px" }}>
+                      <label
+                        className="field-label"
+                        style={{ textAlign: "left" }}
+                      >
+                        Lookup Existing Code
+                      </label>
+                      <div style={{ display: "flex", gap: "8px" }}>
+                        <input
+                          className="modern-input"
+                          placeholder="e.g. drop-it"
+                          style={{ padding: "12px 16px", fontSize: "13px" }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              const code = (e.target as HTMLInputElement).value;
+                              if (code) {
+                                setResult(`${API_BASE}/${code}`);
+                                fetchStats(code);
+                              }
+                            }
+                          }}
+                        />
+                        <button
+                          className="btn-wowie"
+                          style={{
+                            width: "50px",
+                            height: "auto",
+                            padding: "0",
+                            borderRadius: "16px",
+                          }}
+                          onClick={(e) => {
+                            const input = e.currentTarget
+                              .previousSibling as HTMLInputElement;
+                            if (input.value) {
+                              setResult(`${API_BASE}/${input.value}`);
+                              fetchStats(input.value);
+                            }
+                          }}
+                        >
+                          <Activity size={18} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <p
+                      style={{
+                        fontSize: "12px",
+                        color: "#64748b",
+                        marginTop: "32px",
+                        maxWidth: "240px",
+                      }}
+                    >
+                      Deploy a new fragment or enter a code above to initialize
+                      real-time tracking.
+                    </p>
+                  </div>
                 )}
               </AnimatePresence>
-            </motion.div>
-          </div>
-
-          {/* Result Side */}
-          <div className="lg:col-span-12 xl:col-span-5 relative">
-            <AnimatePresence mode="wait">
-              {result ? (
-                <motion.div
-                  key="result"
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  className="space-y-6"
-                >
-                  <div className="glass-panel p-8 border-indigo-500/30">
-                    <div className="flex items-center justify-between mb-6">
-                      <h3 className="font-bold flex items-center gap-2">
-                        <CheckCircle2 className="text-indigo-400" size={20} />
-                        Link Ready
-                      </h3>
-                      {stats && stats.expires_at && (
-                        <span className="badge text-[10px]">
-                          Expires{" "}
-                          {new Date(stats.expires_at).toLocaleDateString()}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex gap-2">
-                      <input
-                        className="input-field bg-white/5 border-none font-medium"
-                        readOnly
-                        value={result}
-                      />
-                      <button
-                        onClick={copyToClipboard}
-                        className="p-3 glass-panel hover:bg-white/10 transition-colors"
-                        title="Copy"
-                      >
-                        {copied ? (
-                          <CheckCircle2
-                            className="text-emerald-500"
-                            size={20}
-                          />
-                        ) : (
-                          <Copy size={20} />
-                        )}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-6">
-                    <div className="stat-card">
-                      <p className="text-neutral-500 text-xs font-bold uppercase tracking-wider mb-2">
-                        Total Scans
-                      </p>
-                      <p className="text-3xl font-bold">
-                        {stats?.total_clicks || 0}
-                      </p>
-                    </div>
-                    <div className="stat-card flex flex-col items-center justify-center p-4">
-                      <div className="bg-white p-2 rounded-xl">
-                        <img
-                          src={`${API_BASE}/qr/${
-                            stats?.short_code || result.split("/").pop()
-                          }`}
-                          alt="QR Code"
-                          className="w-20 h-20"
-                        />
-                      </div>
-                      <p className="text-[10px] text-neutral-500 mt-2">
-                        Scan for instant access
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="glass-panel p-6">
-                    <h3 className="text-sm font-bold flex items-center gap-2 mb-4">
-                      <History size={16} className="text-neutral-500" />
-                      Live Traffic
-                    </h3>
-                    <div className="space-y-3">
-                      {stats?.last_clicks && stats.last_clicks.length > 0 ? (
-                        stats.last_clicks.slice(0, 3).map((click, i) => (
-                          <div
-                            key={i}
-                            className="flex justify-between items-center text-xs p-3 rounded-lg bg-white/5"
-                          >
-                            <span className="flex items-center gap-2">
-                              <Globe size={12} className="text-neutral-500" />
-                              {click.ip
-                                ? click.ip.substring(0, 15) + "..."
-                                : "Unknown"}
-                            </span>
-                            <span className="text-neutral-600">
-                              {new Date(click.timestamp).toLocaleTimeString()}
-                            </span>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="text-xs text-neutral-600 py-4 text-center">
-                          Awaiting first scan...
-                        </p>
-                      )}
-                    </div>
-                  </div>
-                </motion.div>
-              ) : (
-                <div
-                  key="placeholder"
-                  className="glass-panel p-12 h-full flex flex-col items-center justify-center text-center opacity-40 border-dashed"
-                >
-                  <div className="w-16 h-16 rounded-full bg-white/5 flex items-center justify-center mb-6">
-                    <QrIcon size={32} />
-                  </div>
-                  <h3 className="font-bold text-lg mb-2">
-                    Analytics Workspace
-                  </h3>
-                  <p className="text-sm text-neutral-400">
-                    Shorten a URL to unlock live tracking and QR code
-                    generation.
-                  </p>
-                </div>
-              )}
-            </AnimatePresence>
-          </div>
-        </section>
+            </div>
+          </section>
+        </div>
       </main>
     </div>
   );
