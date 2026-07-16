@@ -230,6 +230,8 @@ Import the included `postman_collection.json` for ready-to-use API tests.
 
 ---
 
+> Note: this line was added as a test of the PR workflow.
+
 ## 🤝 Contributing
 
 Contributions are welcome! Please feel free to submit a Pull Request.
